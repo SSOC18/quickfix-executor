@@ -1,13 +1,13 @@
-Example QuickFIX/Go Applications
-================================
+Example QuickFIX/Go executor
+============================
 
-[![Build Status](https://travis-ci.org/quickfixgo/examples.svg?branch=master)](https://travis-ci.org/quickfixgo/examples)
+* Forked from the executor published at https://githubcom/quickfixgo/examples
+* The original Executor is a server that fills every limit order it receives
+* This executor has some more rules such as
+  * only fills BTCUSD orders
+  * checks that the volume to fill is *affordable*
+  * checks that limit orders arenot too far from the latest recorded price in the database
 
-* TradeClient is a simple console based trading client
-* Executor is a server that fills every limit order it receives
-* OrderMatch is a primitive matching engine 
-
-All examples have been ported from [QuickFIX](http://quickfixengine.org)
 
 Installation
 ------------
@@ -16,16 +16,23 @@ To build and run the examples, you will first need [Go](http://www.golang.org) i
 
 For local dev first make sure Go is properly installed, including setting up a [GOPATH](http://golang.org/doc/code.html#GOPATH).
 
-Next, using [Git](https://git-scm.com/), clone this repository into `$GOPATH/src/github.com/quickfixgo/examples`. All the necessary dependencies are either vendored, so you just need to type `make`. This will compile and install the examples into `$GOPATH/bin`. If this exits with exit status 0, then everything is working!
+Next, using [Git](https://git-scm.com/), clone this repository into `$GOPATH/src/github.com/quickfixgo/examples`.
 
-```sh
-$ make
-```
+Install `lib/pq` with `go get github.com/lib/pq`
+
+Other dependencies (from the original executor) are vendored, so you just need to type `make install`.
+
+This will compile and install the examples into `$GOPATH/bin`.
+
+If this exits with exit status 0, then everything is working!
+
 
 Running the Examples
 --------------------
 
-Following installation, the examples can be found in `$GOPATH/bin`.  The examples are meant to be run in pairs- the TradeClient as a client of either the Executor or OrderMatch.  By default, the examples will load the default configurations named after the example apps provided in the `config/` root directory.   Eg, running `$GOPATH/bin/tradeclient` will load the `config/tradeclient.cfg` configuration.  Each example can be run with a custom configuration as a command line argument (`$GOPATH/bin/tradeclient my_trade_client.cfg`).
+After installation, type `make run` to launch the executor.
+
+By default, this will load the default configurations named after the example apps provided in the `config/` root directory.   Eg, running `$GOPATH/bin/executor` will load the `config/executor.cfg` configuration. This can be run with a custom configuration as a command line argument (`$GOPATH/bin/tradeclient my_trade_client.cfg`).
 
 Licensing
 ---------
