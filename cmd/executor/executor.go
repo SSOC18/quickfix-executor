@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path"
 	"log"
+    "strings"
+    "io/ioutil"
 	"net/smtp"
 	"database/sql"
 	"github.com/lib/pq"
@@ -128,7 +130,7 @@ func (e *executor) OnFIX40NewOrderSingle(msg fix40nos.NewOrderSingle, sessionID 
     var minimum_ask string
     var maximum_bid string
     err2 := db.QueryRow("SELECT minimum_ask, maximum_bid FROM btcprice ORDER BY index DESC LIMIT 1;").Scan(&minimum_ask, &maximum_bid)
-    fmt.Println("Mimimum Ask        |   Maximum Bid")
+    fmt.Println("Mimimum Ask    |   Maximum Bid")
     fmt.Println(minimum_ask, maximum_bid)
     if err2 != nil {
 		log.Fatal(err2)
@@ -167,11 +169,17 @@ func (e *executor) OnFIX40NewOrderSingle(msg fix40nos.NewOrderSingle, sessionID 
 
 	quickfix.SendToTarget(execReport, sessionID)
 
-	// Set up authentication information.
+    ordersum := fmt.Sprintf("Trade successfully processed (FIX 4.0) with price=%s, ordertype=%s, symbol=%s, orderqty=%s, side=%s", price, ordType, symbol, orderQty, side)
+    b, err4 := ioutil.ReadFile("pwd.secret")
+    if err4 != nil {
+        fmt.Println(err4)
+    }
+    pwd := string(b)
+    strings.Replace(pwd, " ", "", -1)
 	auth := smtp.PlainAuth(
 		"",
 		"market.eye.alerts@gmail.com",
-		"asdzxc3$R",
+        string(pwd),
 		"smtp.gmail.com",
 	)
 	err3 := smtp.SendMail(
@@ -180,7 +188,7 @@ func (e *executor) OnFIX40NewOrderSingle(msg fix40nos.NewOrderSingle, sessionID 
 		"market.eye.alerts@gmail.com",
 		//[]string{"mickael.mekari@gmail.com","shadi@akikieng.com"},
         []string{"market.eye.alerts@gmail.com"},
-		[]byte("Trade successfully processed."),
+		[]byte(ordersum),
 	)
 	if err3 != nil {
 		log.Fatal(err3)
@@ -189,41 +197,82 @@ func (e *executor) OnFIX40NewOrderSingle(msg fix40nos.NewOrderSingle, sessionID 
 	return nil
 }
 
+
+
 func (e *executor) OnFIX41NewOrderSingle(msg fix41nos.NewOrderSingle, sessionID quickfix.SessionID) (err quickfix.MessageRejectError) {
 	ordType, err := msg.GetOrdType()
 	if err != nil {
-		return
+		return err
 	}
+
 	if ordType != enum.OrdType_LIMIT {
 		return quickfix.ValueIsIncorrect(tag.OrdType)
 	}
 
 	symbol, err := msg.GetSymbol()
 	if err != nil {
-		return
+		return err
 	}
-
+    
+	if symbol != "BTCUSD" {
+		fmt.Printf("Only BTCUSD accepted\n")
+		return quickfix.ValueIsIncorrect(tag.Symbol)
+	}
+    
 	side, err := msg.GetSide()
 	if err != nil {
-		return
+		return err
 	}
 
 	orderQty, err := msg.GetOrderQty()
 	if err != nil {
-		return
+		return err
+	}
+    
+    maxQty, _ := decimal.NewFromString("100")
+	if(orderQty.GreaterThan(maxQty)) {
+		fmt.Printf("Quantity too high\n")
+		return quickfix.ValueIsIncorrect(tag.OrderQty)
 	}
 
 	price, err := msg.GetPrice()
 	if err != nil {
-		return
+		return err
 	}
-
+        
+    fmt.Println("Connecting to cryppro_v0 database")
+    connStr := "user=mickael dbname=cryppro_v0 password=r5vPg3Q8 host=localhost port=postgresql"
+    db, err1 := sql.Open("postgres", connStr)
+	if err1 != nil {
+		log.Fatal(err1)
+	}
+    _ = pq.Efatal
+    var minimum_ask string
+    var maximum_bid string
+    err2 := db.QueryRow("SELECT minimum_ask, maximum_bid FROM btcprice ORDER BY index DESC LIMIT 1;").Scan(&minimum_ask, &maximum_bid)
+    fmt.Println("Mimimum Ask    |   Maximum Bid")
+    fmt.Println(minimum_ask, maximum_bid)
+    if err2 != nil {
+		log.Fatal(err2)
+	}
+    
+    minask, _ := decimal.NewFromString(minimum_ask)
+    maxbid, _ := decimal.NewFromString(maximum_bid)
+    best_bidask := decimal.Avg(minask, maxbid)
+    diff := decimal.Sum(price, best_bidask.Neg())
+    diff_price := diff.Div(price).Abs()
+    maxDiff, _ := decimal.NewFromString("0.05")
+    if(diff_price.GreaterThan(maxDiff)){
+        fmt.Printf("Price difference is greater than 5% (See Most recent Best Bid/Ask)")
+		return quickfix.ValueIsIncorrect(tag.Price)
+	}
+    
 	execReport := fix41er.New(
 		e.genOrderID(),
 		e.genExecID(),
 		field.NewExecTransType(enum.ExecTransType_NEW),
 		field.NewExecType(enum.ExecType_FILL),
-		field.NewOrdStatus(enum.OrdStatus_FILLED),
+        field.NewOrdStatus(enum.OrdStatus_FILLED),
 		field.NewSymbol(symbol),
 		field.NewSide(side),
 		field.NewOrderQty(orderQty, 2),
@@ -236,13 +285,38 @@ func (e *executor) OnFIX41NewOrderSingle(msg fix41nos.NewOrderSingle, sessionID 
 
 	clOrdID, err := msg.GetClOrdID()
 	if err != nil {
-		return
+		return err
 	}
 	execReport.SetClOrdID(clOrdID)
 
 	quickfix.SendToTarget(execReport, sessionID)
 
-	return
+    ordersum := fmt.Sprintf("Trade successfully processed (FIX 4.1) with price=%s, ordertype=%s, symbol=%s, orderqty=%s, side=%s", price, ordType, symbol, orderQty, side)
+    b, err4 := ioutil.ReadFile("pwd.secret")
+    if err4 != nil {
+        fmt.Println(err4)
+    }
+    pwd := string(b)
+    strings.Replace(pwd, " ", "", -1)
+	auth := smtp.PlainAuth(
+		"",
+		"market.eye.alerts@gmail.com",
+        string(pwd),
+		"smtp.gmail.com",
+	)
+	err3 := smtp.SendMail(
+		"smtp.gmail.com:587",
+        auth,
+		"market.eye.alerts@gmail.com",
+		//[]string{"mickael.mekari@gmail.com","shadi@akikieng.com"},
+        []string{"market.eye.alerts@gmail.com"},
+		[]byte(ordersum),
+	)
+	if err3 != nil {
+		log.Fatal(err3)
+	}
+
+	return 
 }
 
 func (e *executor) OnFIX42NewOrderSingle(msg fix42nos.NewOrderSingle, sessionID quickfix.SessionID) (err quickfix.MessageRejectError) {
@@ -260,6 +334,11 @@ func (e *executor) OnFIX42NewOrderSingle(msg fix42nos.NewOrderSingle, sessionID 
 		return
 	}
 
+	if symbol != "BTCUSD" {
+		fmt.Printf("Only BTCUSD accepted\n")
+		return quickfix.ValueIsIncorrect(tag.Symbol)
+	}
+    
 	side, err := msg.GetSide()
 	if err != nil {
 		return
@@ -269,10 +348,43 @@ func (e *executor) OnFIX42NewOrderSingle(msg fix42nos.NewOrderSingle, sessionID 
 	if err != nil {
 		return
 	}
+    
+    maxQty, _ := decimal.NewFromString("100")
+	if(orderQty.GreaterThan(maxQty)) {
+		fmt.Printf("Quantity too high\n")
+		return quickfix.ValueIsIncorrect(tag.OrderQty)
+	}
 
 	price, err := msg.GetPrice()
 	if err != nil {
 		return
+	}
+    
+    fmt.Println("Connecting to cryppro_v0 database")
+    connStr := "user=mickael dbname=cryppro_v0 password=r5vPg3Q8 host=localhost port=postgresql"
+    db, err1 := sql.Open("postgres", connStr)
+	if err1 != nil {
+		log.Fatal(err1)
+	}
+    _ = pq.Efatal
+    var minimum_ask string
+    var maximum_bid string
+    err2 := db.QueryRow("SELECT minimum_ask, maximum_bid FROM btcprice ORDER BY index DESC LIMIT 1;").Scan(&minimum_ask, &maximum_bid)
+    fmt.Println("Mimimum Ask    |   Maximum Bid")
+    fmt.Println(minimum_ask, maximum_bid)
+    if err2 != nil {
+		log.Fatal(err2)
+	}
+    
+    minask, _ := decimal.NewFromString(minimum_ask)
+    maxbid, _ := decimal.NewFromString(maximum_bid)
+    best_bidask := decimal.Avg(minask, maxbid)
+    diff := decimal.Sum(price, best_bidask.Neg())
+    diff_price := diff.Div(price).Abs()
+    maxDiff, _ := decimal.NewFromString("0.05")
+    if(diff_price.GreaterThan(maxDiff)){
+        fmt.Printf("Price difference is greater than 5% (See Most recent Best Bid/Ask)")
+		return quickfix.ValueIsIncorrect(tag.Price)
 	}
 
 	clOrdID, err := msg.GetClOrdID()
@@ -307,8 +419,33 @@ func (e *executor) OnFIX42NewOrderSingle(msg fix42nos.NewOrderSingle, sessionID 
 	}
 
 	quickfix.SendToTarget(execReport, sessionID)
+    
+    ordersum := fmt.Sprintf("Trade successfully processed (FIX 4.2) with price=%s, ordertype=%s, symbol=%s, orderqty=%s, side=%s", price, ordType, symbol, orderQty, side)
+    b, err4 := ioutil.ReadFile("pwd.secret")
+    if err4 != nil {
+        fmt.Println(err4)
+    }
+    pwd := string(b)
+    strings.Replace(pwd, " ", "", -1)
+	auth := smtp.PlainAuth(
+		"",
+		"market.eye.alerts@gmail.com",
+        string(pwd),
+		"smtp.gmail.com",
+	)
+	err3 := smtp.SendMail(
+		"smtp.gmail.com:587",
+        auth,
+		"market.eye.alerts@gmail.com",
+		//[]string{"mickael.mekari@gmail.com","shadi@akikieng.com"},
+        []string{"market.eye.alerts@gmail.com"},
+		[]byte(ordersum),
+	)
+	if err3 != nil {
+		log.Fatal(err3)
+	}
 
-	return
+	return 
 }
 
 func (e *executor) OnFIX43NewOrderSingle(msg fix43nos.NewOrderSingle, sessionID quickfix.SessionID) (err quickfix.MessageRejectError) {
@@ -324,6 +461,11 @@ func (e *executor) OnFIX43NewOrderSingle(msg fix43nos.NewOrderSingle, sessionID 
 	if err != nil {
 		return
 	}
+    
+	if symbol != "BTCUSD" {
+		fmt.Printf("Only BTCUSD accepted\n")
+		return quickfix.ValueIsIncorrect(tag.Symbol)
+	}
 
 	side, err := msg.GetSide()
 	if err != nil {
@@ -334,12 +476,45 @@ func (e *executor) OnFIX43NewOrderSingle(msg fix43nos.NewOrderSingle, sessionID 
 	if err != nil {
 		return
 	}
+    
+    maxQty, _ := decimal.NewFromString("100")
+	if(orderQty.GreaterThan(maxQty)) {
+		fmt.Printf("Quantity too high\n")
+		return quickfix.ValueIsIncorrect(tag.OrderQty)
+	}
 
 	price, err := msg.GetPrice()
 	if err != nil {
 		return
 	}
-
+    
+    fmt.Println("Connecting to cryppro_v0 database")
+    connStr := "user=mickael dbname=cryppro_v0 password=r5vPg3Q8 host=localhost port=postgresql"
+    db, err1 := sql.Open("postgres", connStr)
+	if err1 != nil {
+		log.Fatal(err1)
+	}
+    _ = pq.Efatal
+    var minimum_ask string
+    var maximum_bid string
+    err2 := db.QueryRow("SELECT minimum_ask, maximum_bid FROM btcprice ORDER BY index DESC LIMIT 1;").Scan(&minimum_ask, &maximum_bid)
+    fmt.Println("Mimimum Ask    |   Maximum Bid")
+    fmt.Println(minimum_ask, maximum_bid)
+    if err2 != nil {
+		log.Fatal(err2)
+	}
+    
+    minask, _ := decimal.NewFromString(minimum_ask)
+    maxbid, _ := decimal.NewFromString(maximum_bid)
+    best_bidask := decimal.Avg(minask, maxbid)
+    diff := decimal.Sum(price, best_bidask.Neg())
+    diff_price := diff.Div(price).Abs()
+    maxDiff, _ := decimal.NewFromString("0.05")
+    if(diff_price.GreaterThan(maxDiff)){
+        fmt.Printf("Price difference is greater than 5% (See Most recent Best Bid/Ask)")
+		return quickfix.ValueIsIncorrect(tag.Price)
+	}
+    
 	clOrdID, err := msg.GetClOrdID()
 	if err != nil {
 		return
@@ -371,8 +546,33 @@ func (e *executor) OnFIX43NewOrderSingle(msg fix43nos.NewOrderSingle, sessionID 
 	}
 
 	quickfix.SendToTarget(execReport, sessionID)
+    
+    ordersum := fmt.Sprintf("Trade successfully processed (FIX 4.3) with price=%s, ordertype=%s, symbol=%s, orderqty=%s, side=%s", price, ordType, symbol, orderQty, side)
+    b, err4 := ioutil.ReadFile("pwd.secret")
+    if err4 != nil {
+        fmt.Println(err4)
+    }
+    pwd := string(b)
+    strings.Replace(pwd, " ", "", -1)
+	auth := smtp.PlainAuth(
+		"",
+		"market.eye.alerts@gmail.com",
+        string(pwd),
+		"smtp.gmail.com",
+	)
+	err3 := smtp.SendMail(
+		"smtp.gmail.com:587",
+        auth,
+		"market.eye.alerts@gmail.com",
+		//[]string{"mickael.mekari@gmail.com","shadi@akikieng.com"},
+        []string{"market.eye.alerts@gmail.com"},
+		[]byte(ordersum),
+	)
+	if err3 != nil {
+		log.Fatal(err3)
+	}
 
-	return
+	return 
 }
 
 func (e *executor) OnFIX44NewOrderSingle(msg fix44nos.NewOrderSingle, sessionID quickfix.SessionID) (err quickfix.MessageRejectError) {
@@ -389,6 +589,11 @@ func (e *executor) OnFIX44NewOrderSingle(msg fix44nos.NewOrderSingle, sessionID 
 	if err != nil {
 		return
 	}
+    
+	if symbol != "BTCUSD" {
+		fmt.Printf("Only BTCUSD accepted\n")
+		return quickfix.ValueIsIncorrect(tag.Symbol)
+	}
 
 	side, err := msg.GetSide()
 	if err != nil {
@@ -399,10 +604,43 @@ func (e *executor) OnFIX44NewOrderSingle(msg fix44nos.NewOrderSingle, sessionID 
 	if err != nil {
 		return
 	}
+    
+    maxQty, _ := decimal.NewFromString("100")
+	if(orderQty.GreaterThan(maxQty)) {
+		fmt.Printf("Quantity too high\n")
+		return quickfix.ValueIsIncorrect(tag.OrderQty)
+	}
 
 	price, err := msg.GetPrice()
 	if err != nil {
 		return
+	}
+    
+    fmt.Println("Connecting to cryppro_v0 database")
+    connStr := "user=mickael dbname=cryppro_v0 password=r5vPg3Q8 host=localhost port=postgresql"
+    db, err1 := sql.Open("postgres", connStr)
+	if err1 != nil {
+		log.Fatal(err1)
+	}
+    _ = pq.Efatal
+    var minimum_ask string
+    var maximum_bid string
+    err2 := db.QueryRow("SELECT minimum_ask, maximum_bid FROM btcprice ORDER BY index DESC LIMIT 1;").Scan(&minimum_ask, &maximum_bid)
+    fmt.Println("Mimimum Ask    |   Maximum Bid")
+    fmt.Println(minimum_ask, maximum_bid)
+    if err2 != nil {
+		log.Fatal(err2)
+	}
+    
+    minask, _ := decimal.NewFromString(minimum_ask)
+    maxbid, _ := decimal.NewFromString(maximum_bid)
+    best_bidask := decimal.Avg(minask, maxbid)
+    diff := decimal.Sum(price, best_bidask.Neg())
+    diff_price := diff.Div(price).Abs()
+    maxDiff, _ := decimal.NewFromString("0.05")
+    if(diff_price.GreaterThan(maxDiff)){
+        fmt.Printf("Price difference is greater than 5% (See Most recent Best Bid/Ask)")
+		return quickfix.ValueIsIncorrect(tag.Price)
 	}
 
 	clOrdID, err := msg.GetClOrdID()
@@ -436,8 +674,33 @@ func (e *executor) OnFIX44NewOrderSingle(msg fix44nos.NewOrderSingle, sessionID 
 	}
 
 	quickfix.SendToTarget(execReport, sessionID)
+    
+    ordersum := fmt.Sprintf("Trade successfully processed (FIX 4.4) with price=%s, ordertype=%s, symbol=%s, orderqty=%s, side=%s", price, ordType, symbol, orderQty, side)
+    b, err4 := ioutil.ReadFile("pwd.secret")
+    if err4 != nil {
+        fmt.Println(err4)
+    }
+    pwd := string(b)
+    strings.Replace(pwd, " ", "", -1)
+	auth := smtp.PlainAuth(
+		"",
+		"market.eye.alerts@gmail.com",
+        string(pwd),
+		"smtp.gmail.com",
+	)
+	err3 := smtp.SendMail(
+		"smtp.gmail.com:587",
+        auth,
+		"market.eye.alerts@gmail.com",
+		//[]string{"mickael.mekari@gmail.com","shadi@akikieng.com"},
+        []string{"market.eye.alerts@gmail.com"},
+		[]byte(ordersum),
+	)
+	if err3 != nil {
+		log.Fatal(err3)
+	}
 
-	return
+	return 
 }
 
 func (e *executor) OnFIX50NewOrderSingle(msg fix50nos.NewOrderSingle, sessionID quickfix.SessionID) (err quickfix.MessageRejectError) {
@@ -454,6 +717,11 @@ func (e *executor) OnFIX50NewOrderSingle(msg fix50nos.NewOrderSingle, sessionID 
 	if err != nil {
 		return
 	}
+    
+	if symbol != "BTCUSD" {
+		fmt.Printf("Only BTCUSD accepted\n")
+		return quickfix.ValueIsIncorrect(tag.Symbol)
+	}
 
 	side, err := msg.GetSide()
 	if err != nil {
@@ -464,10 +732,43 @@ func (e *executor) OnFIX50NewOrderSingle(msg fix50nos.NewOrderSingle, sessionID 
 	if err != nil {
 		return
 	}
+        
+    maxQty, _ := decimal.NewFromString("100")
+	if(orderQty.GreaterThan(maxQty)) {
+		fmt.Printf("Quantity too high\n")
+		return quickfix.ValueIsIncorrect(tag.OrderQty)
+	}
 
 	price, err := msg.GetPrice()
 	if err != nil {
 		return
+	}
+    
+    fmt.Println("Connecting to cryppro_v0 database")
+    connStr := "user=mickael dbname=cryppro_v0 password=r5vPg3Q8 host=localhost port=postgresql"
+    db, err1 := sql.Open("postgres", connStr)
+	if err1 != nil {
+		log.Fatal(err1)
+	}
+    _ = pq.Efatal
+    var minimum_ask string
+    var maximum_bid string
+    err2 := db.QueryRow("SELECT minimum_ask, maximum_bid FROM btcprice ORDER BY index DESC LIMIT 1;").Scan(&minimum_ask, &maximum_bid)
+    fmt.Println("Mimimum Ask    |   Maximum Bid")
+    fmt.Println(minimum_ask, maximum_bid)
+    if err2 != nil {
+		log.Fatal(err2)
+	}
+    
+    minask, _ := decimal.NewFromString(minimum_ask)
+    maxbid, _ := decimal.NewFromString(maximum_bid)
+    best_bidask := decimal.Avg(minask, maxbid)
+    diff := decimal.Sum(price, best_bidask.Neg())
+    diff_price := diff.Div(price).Abs()
+    maxDiff, _ := decimal.NewFromString("0.05")
+    if(diff_price.GreaterThan(maxDiff)){
+        fmt.Printf("Price difference is greater than 5% (See Most recent Best Bid/Ask)")
+		return quickfix.ValueIsIncorrect(tag.Price)
 	}
 
 	clOrdID, err := msg.GetClOrdID()
@@ -501,8 +802,33 @@ func (e *executor) OnFIX50NewOrderSingle(msg fix50nos.NewOrderSingle, sessionID 
 	}
 
 	quickfix.SendToTarget(execReport, sessionID)
+    
+    ordersum := fmt.Sprintf("Trade successfully processed (FIX 1.1) with price=%s, ordertype=%s, symbol=%s, orderqty=%s, side=%s", price, ordType, symbol, orderQty, side)
+    b, err4 := ioutil.ReadFile("pwd.secret")
+    if err4 != nil {
+        fmt.Println(err4)
+    }
+    pwd := string(b)
+    strings.Replace(pwd, " ", "", -1)
+	auth := smtp.PlainAuth(
+		"",
+		"market.eye.alerts@gmail.com",
+        string(pwd),
+		"smtp.gmail.com",
+	)
+	err3 := smtp.SendMail(
+		"smtp.gmail.com:587",
+        auth,
+		"market.eye.alerts@gmail.com",
+		//[]string{"mickael.mekari@gmail.com","shadi@akikieng.com"},
+        []string{"market.eye.alerts@gmail.com"},
+		[]byte(ordersum),
+	)
+	if err3 != nil {
+		log.Fatal(err3)
+	}
 
-	return
+	return 
 }
 
 func main() {
@@ -514,7 +840,7 @@ func main() {
 		cfgFileName = flag.Arg(0)
 	}
 
-    fmt.Printf("Using config file: %b", cfgFileName)
+    fmt.Println("Using config file: %s", cfgFileName)
     
     cfg, err := os.Open(cfgFileName)
 	if err != nil {
