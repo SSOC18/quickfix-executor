@@ -513,6 +513,8 @@ func main() {
 	if flag.NArg() > 0 {
 		cfgFileName = flag.Arg(0)
 	}
+
+    fmt.Printf("Using config file: %b", cfgFileName)
     
     cfg, err := os.Open(cfgFileName)
 	if err != nil {
