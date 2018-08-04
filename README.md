@@ -38,3 +38,9 @@ Licensing
 ---------
 
 This software is available under the QuickFIX Software License. Please see the [LICENSE.txt](https://github.com/quickfixgo/examples/blob/master/LICENSE.txt) for the terms specified by the QuickFIX Software License.
+
+Screencast Example
+------------------
+
+A new order transaction example in YouTube: https://youtu.be/K6vgXpXaFd0
+The screencast is also available in this repository, and shows the executor accepting and filling a new order from the Web UI tradeclient through the RabbitMQ server.
