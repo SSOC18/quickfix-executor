@@ -43,4 +43,4 @@ Screencast Example
 ------------------
 
 A new order transaction example in YouTube: https://youtu.be/K6vgXpXaFd0
-The screencast is also available in this repository, and shows the executor accepting and filling a new order from the Web UI tradeclient through the RabbitMQ server.
+It shows the executor accepting and filling a new order from the Web UI tradeclient through the RabbitMQ server.
